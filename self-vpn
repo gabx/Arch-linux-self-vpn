@@ -1,0 +1,87 @@
+#!/bin/bash
+
+# --- CONFIGURATION ---
+# Vérifiez avec "ip addr" que c'est bien votre interface internet (ex: enp3s0 ou wlan0)
+INTERFACE_INTERNET="enp3s0"
+WG_DIR="/etc/wireguard"
+
+# IPs pour le câble virtuel (transport)
+VETH_HOST_IP="192.168.99.1"
+VETH_CLIENT_IP="192.168.99.2"
+
+start() {
+    echo "🚀 Démarrage du Self-VPN..."
+
+    # 1. Nettoyage préventif
+    ip link delete wg0 2>/dev/null
+    ip netns delete vpn_client 2>/dev/null
+    # Suppression de l'ancien câble virtuel s'il traine
+    ip link delete v-host 2>/dev/null 
+
+    # 2. Création du Namespace et du Câble Virtuel (C'est ce qui manquait !)
+    ip netns add vpn_client
+    ip link add v-host type veth peer name v-client
+    ip link set v-client netns vpn_client
+    
+    # On allume le câble côté Hôte
+    ip addr add $VETH_HOST_IP/24 dev v-host
+    ip link set v-host up
+
+    # On allume le câble côté Client (dans la bulle)
+    ip netns exec vpn_client ip addr add $VETH_CLIENT_IP/24 dev v-client
+    ip netns exec vpn_client ip link set v-client up
+    ip netns exec vpn_client ip link set lo up
+    # La bulle doit passer par l'hôte pour sortir
+    ip netns exec vpn_client ip route add default via $VETH_HOST_IP
+
+    # 3. Serveur WireGuard (Hôte)
+    ip link add dev wg0 type wireguard
+    ip addr add 10.0.0.1/24 dev wg0
+    wg set wg0 private-key $WG_DIR/server_private listen-port 51820
+    # On autorise l'IP du client VPN
+    wg set wg0 peer $(cat $WG_DIR/client_public) allowed-ips 10.0.0.2/32
+    ip link set wg0 up
+
+    # 4. Client WireGuard (Dans la bulle)
+    ip link add dev wg1 type wireguard
+    ip link set wg1 netns vpn_client
+    
+    ip netns exec vpn_client ip addr add 10.0.0.2/24 dev wg1
+    ip netns exec vpn_client ip link set wg1 up
+    ip netns exec vpn_client wg set wg1 \
+        private-key $WG_DIR/client_private \
+        peer $(cat $WG_DIR/server_public) \
+        endpoint $VETH_HOST_IP:51820 \
+        allowed-ips 0.0.0.0/0
+    
+    # On remplace la route par défaut pour passer par le VPN
+    ip netns exec vpn_client ip route del default
+    ip netns exec vpn_client ip route add default dev wg1
+
+    # 5. Routage & NAT (Pour que l'hôte partage sa connexion internet)
+    sysctl -w net.ipv4.ip_forward=1 > /dev/null
+    # On autorise le NAT sur l'interface internet
+    iptables -t nat -A POSTROUTING -s 10.0.0.0/24 -o $INTERFACE_INTERNET -j MASQUERADE
+    
+    # 6. Fix DNS
+    mkdir -p /etc/netns/vpn_client
+    echo "nameserver 8.8.8.8" > /etc/netns/vpn_client/resolv.conf
+
+    echo "✅ VPN monté ! Lancez vos apps avec : sudo ip netns exec vpn_client su - $SUDO_USER -c firefox"
+}
+
+stop() {
+    echo "🛑 Arrêt du Self-VPN..."
+    ip netns delete vpn_client 2>/dev/null
+    ip link delete wg0 2>/dev/null
+    ip link delete v-host 2>/dev/null
+    # Nettoyage iptables (attention, ça supprime toutes les règles NAT de masquerade)
+    iptables -t nat -D POSTROUTING -s 10.0.0.0/24 -o $INTERFACE_INTERNET -j MASQUERADE 2>/dev/null
+}
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop; sleep 1; start ;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
