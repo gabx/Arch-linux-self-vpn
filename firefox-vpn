@@ -1,0 +1,9 @@
+#!/bin/bash
+# Script pour lancer Firefox dans le namespace vpn_client
+
+# On autorise l'accès à l'affichage (X11/Wayland)
+xhost +local: > /dev/null 2>&1
+
+# On lance Firefox dans la bulle
+ip netns exec vpn_client sudo -u gabx --preserve-env=DISPLAY,XAUTHORITY,WAYLAND_DISPLAY firefox
+
