@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Firefox VPN (Secure)
+Comment=Naviguer via le VPN WireGuard local
+Exec=sh -c "zenity --password --title="Mot de passe Root" | sudo -S /usr/local/bin/firefox-vpn"
+Icon=firefox
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+StartupNotify=true
