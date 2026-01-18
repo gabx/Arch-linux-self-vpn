@@ -1,0 +1,19 @@
+[Unit]
+Description=Self-Hosted WireGuard Namespace VPN
+# On attend que le réseau soit totalement actif avant de se lancer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Lancement
+ExecStart=/usr/local/bin/self-vpn start
+
+# Arrêt (quand on éteint le PC ou qu'on tape systemctl stop)
+ExecStop=/usr/local/bin/self-vpn stop
+
+[Install]
+WantedBy=multi-user.target
+
